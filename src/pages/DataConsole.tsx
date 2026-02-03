@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useSchema, useExecuteQuery } from '@/hooks/useApi';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -12,13 +12,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -37,7 +30,7 @@ import {
   PaginationPrevious,
 } from '@/components/ui/pagination';
 import { toast } from 'sonner';
-import { Search, Play, Download, RefreshCw, Database, Edit, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Play, Download, RefreshCw, Database, Edit } from 'lucide-react';
 import { useDebounce } from '@/hooks/useDebounce';
 import { cn } from '@/lib/utils';
 
@@ -48,7 +41,10 @@ export default function DataConsole() {
   const [searchQuery, setSearchQuery] = useState('');
   const [sqlQuery, setSqlQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedRow, setSelectedRow] = useState<Record<string, unknown> | null>(null);
+  const [editMode, setEditMode] = useState<'create' | 'edit'>('edit');
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [originalRow, setOriginalRow] = useState<Record<string, unknown> | null>(null);
+  const [lastExecutedQuery, setLastExecutedQuery] = useState<string>('');
   const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
 
   const debouncedSearch = useDebounce(searchQuery, 300);
@@ -62,10 +58,28 @@ export default function DataConsole() {
     return `SELECT * FROM ${selectedTable} LIMIT 100`;
   }, [selectedTable]);
 
-  // Execute query when table is selected or SQL is run
-  const { data: queryResult, isLoading: queryLoading, refetch } = useExecuteQuery().mutate
-    ? { data: null, isLoading: false, refetch: () => {} }
-    : { data: null, isLoading: false, refetch: () => {} };
+  const selectedTableSchema = useMemo(() => {
+    if (!schema || !selectedTable) return null;
+    return schema.find((table) => table.name === selectedTable) ?? null;
+  }, [schema, selectedTable]);
+
+  const primaryKeys = useMemo(() => {
+    return selectedTableSchema?.columns.filter((col) => col.primary_key) ?? [];
+  }, [selectedTableSchema]);
+
+  useEffect(() => {
+    if (!selectedTableSchema) return;
+    if (editMode === 'create') {
+      const initialValues = selectedTableSchema.columns.reduce<Record<string, string>>(
+        (acc, column) => {
+          acc[column.name] = '';
+          return acc;
+        },
+        {}
+      );
+      setFormValues(initialValues);
+    }
+  }, [selectedTableSchema, editMode]);
 
   const handleRunQuery = useCallback(() => {
     const query = sqlQuery || autoQuery;
@@ -73,6 +87,7 @@ export default function DataConsole() {
       toast.error('No query to execute');
       return;
     }
+    setLastExecutedQuery(query);
     executeQuery.mutate(query, {
       onSuccess: (data) => {
         toast.success(`Query executed in ${data.executionTime}ms`);
@@ -127,9 +142,165 @@ export default function DataConsole() {
   }, [executeQuery.data, filteredRows, selectedTable]);
 
   const handleRowClick = useCallback((row: Record<string, unknown>) => {
-    setSelectedRow(row);
+    setOriginalRow(row);
+    setEditMode('edit');
+    setFormValues(
+      Object.fromEntries(Object.entries(row).map(([key, value]) => [key, String(value ?? '')]))
+    );
     setIsEditDrawerOpen(true);
   }, []);
+
+  const handleCreateRecord = useCallback(() => {
+    if (!selectedTableSchema) {
+      toast.error('Select a table first');
+      return;
+    }
+    setOriginalRow(null);
+    setEditMode('create');
+    setIsEditDrawerOpen(true);
+  }, [selectedTableSchema]);
+
+  const formatValue = useCallback(
+    (value: string, type?: string) => {
+      if (value === '' || value === undefined) return 'NULL';
+      const normalizedType = type?.toLowerCase() ?? '';
+      if (normalizedType.includes('bool')) {
+        return value.toLowerCase() === 'true' ? 'TRUE' : 'FALSE';
+      }
+      if (
+        normalizedType.match(
+          /(int|numeric|decimal|real|double|float|bigint|smallint|serial|money)/
+        )
+      ) {
+        return Number.isNaN(Number(value)) ? 'NULL' : value;
+      }
+      const escaped = value.replace(/'/g, "''");
+      return `'${escaped}'`;
+    },
+    []
+  );
+
+  const buildWhereClause = useCallback(
+    (row: Record<string, unknown>) => {
+      if (!selectedTableSchema) return '';
+      const keys = primaryKeys.length > 0 ? primaryKeys : selectedTableSchema.columns;
+      const clauses = keys.map((column) => {
+        const rawValue = row[column.name];
+        if (rawValue === null || rawValue === undefined || rawValue === '') {
+          return `${column.name} IS NULL`;
+        }
+        const formattedValue = formatValue(String(rawValue), column.type);
+        return `${column.name} = ${formattedValue}`;
+      });
+      return clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+    },
+    [formatValue, primaryKeys, selectedTableSchema]
+  );
+
+  const handleSaveRecord = useCallback(() => {
+    if (!selectedTableSchema) {
+      toast.error('No table selected');
+      return;
+    }
+
+    if (editMode === 'create') {
+      const columns = selectedTableSchema.columns.filter(
+        (column) => formValues[column.name] !== ''
+      );
+      if (columns.length === 0) {
+        toast.error('Enter at least one value to insert');
+        return;
+      }
+      const columnNames = columns.map((column) => column.name).join(', ');
+      const values = columns
+        .map((column) => formatValue(formValues[column.name], column.type))
+        .join(', ');
+      const insertSql = `INSERT INTO ${selectedTableSchema.name} (${columnNames}) VALUES (${values})`;
+      setLastExecutedQuery(insertSql);
+      executeQuery.mutate(insertSql, {
+        onSuccess: (data) => {
+          toast.success(`Record inserted in ${data.executionTime}ms`);
+          setIsEditDrawerOpen(false);
+        },
+        onError: (error) => toast.error(`Insert failed: ${error.message}`),
+      });
+      return;
+    }
+
+    if (!originalRow) {
+      toast.error('No row selected to update');
+      return;
+    }
+
+    const updates = selectedTableSchema.columns
+      .filter((column) => !column.primary_key)
+      .map((column) => `${column.name} = ${formatValue(formValues[column.name], column.type)}`);
+    const whereClause = buildWhereClause(originalRow);
+
+    if (!whereClause) {
+      toast.error('Cannot update without a valid identifier');
+      return;
+    }
+
+    const updateSql = `UPDATE ${selectedTableSchema.name} SET ${updates.join(', ')} ${whereClause}`;
+    setLastExecutedQuery(updateSql);
+    executeQuery.mutate(updateSql, {
+      onSuccess: (data) => {
+        toast.success(`Record updated in ${data.executionTime}ms`);
+        setIsEditDrawerOpen(false);
+      },
+      onError: (error) => toast.error(`Update failed: ${error.message}`),
+    });
+  }, [
+    buildWhereClause,
+    editMode,
+    executeQuery,
+    formatValue,
+    formValues,
+    originalRow,
+    selectedTableSchema,
+  ]);
+
+  const handleDeleteRecord = useCallback(() => {
+    if (!selectedTableSchema || !originalRow) {
+      toast.error('No record selected');
+      return;
+    }
+    if (!window.confirm('Delete this record? This action cannot be undone.')) {
+      return;
+    }
+    const whereClause = buildWhereClause(originalRow);
+    if (!whereClause) {
+      toast.error('Cannot delete without a valid identifier');
+      return;
+    }
+    const deleteSql = `DELETE FROM ${selectedTableSchema.name} ${whereClause}`;
+    setLastExecutedQuery(deleteSql);
+    executeQuery.mutate(deleteSql, {
+      onSuccess: (data) => {
+        toast.success(`Record deleted in ${data.executionTime}ms`);
+        setIsEditDrawerOpen(false);
+      },
+      onError: (error) => toast.error(`Delete failed: ${error.message}`),
+    });
+  }, [buildWhereClause, executeQuery, originalRow, selectedTableSchema]);
+
+  const handleRefresh = useCallback(() => {
+    const query = lastExecutedQuery || autoQuery;
+    if (!query) {
+      toast.error('No query to refresh');
+      return;
+    }
+    setLastExecutedQuery(query);
+    executeQuery.mutate(query, {
+      onSuccess: (data) => {
+        toast.success(`Query executed in ${data.executionTime}ms`);
+      },
+      onError: (error) => {
+        toast.error(`Query failed: ${error.message}`);
+      },
+    });
+  }, [autoQuery, executeQuery, lastExecutedQuery]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -142,7 +313,7 @@ export default function DataConsole() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => refetch()}>
+          <Button variant="outline" size="sm" onClick={handleRefresh}>
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
@@ -238,22 +409,27 @@ export default function DataConsole() {
                 {debouncedSearch && ` (filtered from ${executeQuery.data?.rows?.length ?? 0})`}
               </CardDescription>
             </div>
-            <div className="relative w-72">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="Filter results..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
-                className="pl-10"
-              />
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={handleCreateRecord}>
+                New Record
+              </Button>
+              <div className="relative w-72">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Filter results..."
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="pl-10"
+                />
+              </div>
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {queryLoading || executeQuery.isPending ? (
+          {executeQuery.isPending ? (
             <div className="space-y-2">
               {Array.from({ length: 5 }).map((_, i) => (
                 <Skeleton key={i} className="h-12 w-full" />
@@ -368,18 +544,45 @@ export default function DataConsole() {
             </SheetDescription>
           </SheetHeader>
           <div className="mt-6 space-y-4">
-            {selectedRow &&
-              Object.entries(selectedRow).map(([key, value]) => (
-                <div key={key} className="space-y-1">
-                  <label className="text-sm font-medium">{key}</label>
-                  <Input
-                    defaultValue={String(value ?? '')}
-                    className="font-mono text-sm"
-                  />
-                </div>
-              ))}
-            <div className="flex gap-2 pt-4">
-              <Button className="flex-1">Save Changes</Button>
+            {selectedTableSchema ? (
+              selectedTableSchema.columns.map((column) => {
+                const isPrimaryKey = column.primary_key;
+                const value = formValues[column.name] ?? '';
+                return (
+                  <div key={column.name} className="space-y-1">
+                    <label className="text-sm font-medium">
+                      {column.name}
+                      {isPrimaryKey && (
+                        <span className="ml-2 text-xs text-muted-foreground">(primary key)</span>
+                      )}
+                    </label>
+                    <Input
+                      value={value}
+                      onChange={(event) =>
+                        setFormValues((prev) => ({
+                          ...prev,
+                          [column.name]: event.target.value,
+                        }))
+                      }
+                      className="font-mono text-sm"
+                      disabled={editMode === 'edit' && isPrimaryKey}
+                      placeholder={column.type}
+                    />
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-muted-foreground">Select a table to edit records.</p>
+            )}
+            <div className="flex flex-wrap gap-2 pt-4">
+              <Button className="flex-1" onClick={handleSaveRecord}>
+                {editMode === 'create' ? 'Create Record' : 'Save Changes'}
+              </Button>
+              {editMode === 'edit' && (
+                <Button variant="destructive" onClick={handleDeleteRecord}>
+                  Delete
+                </Button>
+              )}
               <Button variant="outline" onClick={() => setIsEditDrawerOpen(false)}>
                 Cancel
               </Button>
