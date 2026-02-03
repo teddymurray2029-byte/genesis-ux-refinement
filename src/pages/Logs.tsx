@@ -28,7 +28,6 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Search, RefreshCw, AlertCircle, AlertTriangle, Info, Bug } from 'lucide-react';
-import { format } from 'date-fns';
 import { useDebounce } from '@/hooks/useDebounce';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +47,22 @@ const levelConfig: Record<LogLevel, { icon: typeof Info; color: string; bgColor:
   warn: { icon: AlertTriangle, color: 'text-yellow-500', bgColor: 'bg-yellow-500/10' },
   error: { icon: AlertCircle, color: 'text-red-500', bgColor: 'bg-red-500/10' },
   debug: { icon: Bug, color: 'text-gray-500', bgColor: 'bg-gray-500/10' },
+};
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+const pad = (value: number, length = 2) => value.toString().padStart(length, '0');
+
+const formatServerTimestamp = (timestamp: string) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return `${MONTHS[date.getUTCMonth()]} ${pad(date.getUTCDate())}, ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+};
+
+const formatServerTimestampDetailed = (timestamp: string) => {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return timestamp;
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}.${pad(date.getUTCMilliseconds(), 3)}`;
 };
 
 // Demo logs for when backend isn't connected
@@ -211,7 +226,7 @@ export default function Logs() {
                             </Badge>
                           </TableCell>
                           <TableCell className="font-mono text-xs text-muted-foreground">
-                            {format(new Date(log.timestamp), 'MMM dd, HH:mm:ss')}
+                            {formatServerTimestamp(log.timestamp)}
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline">{log.source}</Badge>
@@ -263,7 +278,7 @@ export default function Logs() {
               <div className="space-y-1">
                 <label className="text-sm font-medium text-muted-foreground">Timestamp</label>
                 <p className="font-mono text-sm">
-                  {format(new Date(selectedLog.timestamp), 'yyyy-MM-dd HH:mm:ss.SSS')}
+                  {formatServerTimestampDetailed(selectedLog.timestamp)}
                 </p>
               </div>
               <div className="space-y-1">
