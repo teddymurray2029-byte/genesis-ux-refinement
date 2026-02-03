@@ -1,0 +1,108 @@
+{
+  "format": "genesis-memory-export",
+  "version": "1.0.0",
+  "exportedAt": "2024-06-18T12:00:00Z",
+  "source": {
+    "app": "Genesis Memory Manager",
+    "environment": "demo",
+    "notes": "Sample export for import testing"
+  },
+  "stats": {
+    "totalMemories": 3,
+    "totalClusters": 2,
+    "totalConnections": 3
+  },
+  "clusters": [
+    {
+      "id": "cluster-product-vision",
+      "label": "Product Vision",
+      "color": "#7C3AED",
+      "memoryIds": ["mem-001", "mem-002"]
+    },
+    {
+      "id": "cluster-user-research",
+      "label": "User Research",
+      "color": "#06B6D4",
+      "memoryIds": ["mem-003"]
+    }
+  ],
+  "memories": [
+    {
+      "id": "mem-001",
+      "createdAt": "2024-06-12T09:32:10Z",
+      "updatedAt": "2024-06-14T15:21:42Z",
+      "type": "note",
+      "title": "Genesis onboarding insights",
+      "content": "New users need a guided walkthrough for the import flow.",
+      "tags": ["onboarding", "import", "ux"],
+      "importance": 0.78,
+      "source": {
+        "channel": "interview",
+        "author": "Research Team"
+      },
+      "metadata": {
+        "confidence": 0.92,
+        "related": ["mem-002"],
+        "language": "en"
+      }
+    },
+    {
+      "id": "mem-002",
+      "createdAt": "2024-06-13T11:05:55Z",
+      "updatedAt": "2024-06-13T11:05:55Z",
+      "type": "decision",
+      "title": "Default import preview",
+      "content": "Show a preview panel after upload with schema + sample rows.",
+      "tags": ["import", "preview", "product"],
+      "importance": 0.66,
+      "source": {
+        "channel": "product-sync",
+        "author": "PM"
+      },
+      "metadata": {
+        "confidence": 0.81,
+        "related": ["mem-001"],
+        "language": "en"
+      }
+    },
+    {
+      "id": "mem-003",
+      "createdAt": "2024-06-15T08:18:30Z",
+      "updatedAt": "2024-06-15T08:18:30Z",
+      "type": "insight",
+      "title": "CSV fallback",
+      "content": "Keep CSV as a fallback for users who export from spreadsheets.",
+      "tags": ["csv", "import", "feedback"],
+      "importance": 0.59,
+      "source": {
+        "channel": "support",
+        "author": "Customer Success"
+      },
+      "metadata": {
+        "confidence": 0.74,
+        "related": [],
+        "language": "en"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": "mem-001",
+      "to": "mem-002",
+      "type": "supports",
+      "strength": 0.7
+    },
+    {
+      "from": "mem-002",
+      "to": "mem-003",
+      "type": "relates",
+      "strength": 0.4
+    },
+    {
+      "from": "mem-003",
+      "to": "mem-001",
+      "type": "context",
+      "strength": 0.5
+    }
+  ]
+}
