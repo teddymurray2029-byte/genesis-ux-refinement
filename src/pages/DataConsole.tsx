@@ -343,7 +343,7 @@ export default function DataConsole() {
   ]);
 
   const handleRefresh = useCallback(() => {
-    const query = lastExecutedQuery || autoQuery;
+    const query = lastSelectQuery || autoQuery || lastExecutedQuery;
     if (!query) {
       toast.error('No query to refresh');
       return;
