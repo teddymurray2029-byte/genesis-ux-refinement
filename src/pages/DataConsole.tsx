@@ -361,7 +361,7 @@ export default function DataConsole() {
         toast.error(`Query failed: ${error.message}`);
       },
     });
-  }, [autoQuery, executeQuery, isSelectQuery, lastExecutedQuery, lastSelectQuery, runSelectQuery]);
+  }, [autoQuery, executeQuery, isSelectQuery, lastExecutedQuery, runSelectQuery]);
 
   return (
     <div className="flex flex-col gap-6">
