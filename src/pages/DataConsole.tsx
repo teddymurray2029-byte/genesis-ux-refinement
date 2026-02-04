@@ -45,6 +45,12 @@ export default function DataConsole() {
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [originalRow, setOriginalRow] = useState<Record<string, unknown> | null>(null);
   const [lastExecutedQuery, setLastExecutedQuery] = useState<string>('');
+  const [lastSelectQuery, setLastSelectQuery] = useState<string>('');
+  const [queryResult, setQueryResult] = useState<{
+    columns?: string[];
+    rows?: Record<string, unknown>[];
+    executionTime?: number;
+  } | null>(null);
   const [isEditDrawerOpen, setIsEditDrawerOpen] = useState(false);
 
   const debouncedSearch = useDebounce(searchQuery, 300);
@@ -81,10 +87,38 @@ export default function DataConsole() {
     }
   }, [selectedTableSchema, editMode]);
 
+  const isSelectQuery = useCallback((query: string) => /^\s*select\b/i.test(query), []);
+
+  const runSelectQuery = useCallback(
+    (query: string, { showToast = true }: { showToast?: boolean } = {}) => {
+      if (!query) return;
+      setLastExecutedQuery(query);
+      setLastSelectQuery(query);
+      executeQuery.mutate(query, {
+        onSuccess: (data) => {
+          if (showToast) {
+            toast.success(`Query executed in ${data.executionTime}ms`);
+          }
+          if (data.columns && data.rows) {
+            setQueryResult(data);
+          }
+        },
+        onError: (error) => {
+          toast.error(`Query failed: ${error.message}`);
+        },
+      });
+    },
+    [executeQuery]
+  );
+
   const handleRunQuery = useCallback(() => {
     const query = sqlQuery || autoQuery;
     if (!query) {
       toast.error('No query to execute');
+      return;
+    }
+    if (isSelectQuery(query)) {
+      runSelectQuery(query);
       return;
     }
     setLastExecutedQuery(query);
@@ -96,19 +130,19 @@ export default function DataConsole() {
         toast.error(`Query failed: ${error.message}`);
       },
     });
-  }, [sqlQuery, autoQuery, executeQuery]);
+  }, [sqlQuery, autoQuery, executeQuery, isSelectQuery, runSelectQuery]);
 
   // Filter rows based on search
   const filteredRows = useMemo(() => {
-    if (!executeQuery.data?.rows) return [];
-    if (!debouncedSearch) return executeQuery.data.rows;
+    if (!queryResult?.rows) return [];
+    if (!debouncedSearch) return queryResult.rows;
 
-    return executeQuery.data.rows.filter((row) =>
+    return queryResult.rows.filter((row) =>
       Object.values(row).some((value) =>
         String(value).toLowerCase().includes(debouncedSearch.toLowerCase())
       )
     );
-  }, [executeQuery.data?.rows, debouncedSearch]);
+  }, [debouncedSearch, queryResult?.rows]);
 
   // Paginate rows
   const paginatedRows = useMemo(() => {
@@ -119,14 +153,14 @@ export default function DataConsole() {
   const totalPages = Math.ceil(filteredRows.length / ROWS_PER_PAGE);
 
   const handleExportCSV = useCallback(() => {
-    if (!executeQuery.data?.rows || executeQuery.data.rows.length === 0) {
+    if (!queryResult?.rows || queryResult.rows.length === 0) {
       toast.error('No data to export');
       return;
     }
 
-    const headers = executeQuery.data.columns.join(',');
+    const headers = queryResult.columns?.join(',') ?? '';
     const rows = filteredRows.map((row) =>
-      executeQuery.data!.columns.map((col) => JSON.stringify(row[col] ?? '')).join(',')
+      (queryResult.columns ?? []).map((col) => JSON.stringify(row[col] ?? '')).join(',')
     );
     const csv = [headers, ...rows].join('\n');
 
@@ -139,7 +173,7 @@ export default function DataConsole() {
     URL.revokeObjectURL(url);
 
     toast.success('Data exported successfully');
-  }, [executeQuery.data, filteredRows, selectedTable]);
+  }, [filteredRows, queryResult, selectedTable]);
 
   const handleRowClick = useCallback((row: Record<string, unknown>) => {
     setOriginalRow(row);
@@ -221,6 +255,10 @@ export default function DataConsole() {
         onSuccess: (data) => {
           toast.success(`Record inserted in ${data.executionTime}ms`);
           setIsEditDrawerOpen(false);
+          const followUpQuery = lastSelectQuery || autoQuery;
+          if (followUpQuery) {
+            runSelectQuery(followUpQuery, { showToast: false });
+          }
         },
         onError: (error) => toast.error(`Insert failed: ${error.message}`),
       });
@@ -248,6 +286,10 @@ export default function DataConsole() {
       onSuccess: (data) => {
         toast.success(`Record updated in ${data.executionTime}ms`);
         setIsEditDrawerOpen(false);
+        const followUpQuery = lastSelectQuery || autoQuery;
+        if (followUpQuery) {
+          runSelectQuery(followUpQuery, { showToast: false });
+        }
       },
       onError: (error) => toast.error(`Update failed: ${error.message}`),
     });
@@ -257,7 +299,10 @@ export default function DataConsole() {
     executeQuery,
     formatValue,
     formValues,
+    autoQuery,
+    lastSelectQuery,
     originalRow,
+    runSelectQuery,
     selectedTableSchema,
   ]);
 
@@ -280,15 +325,31 @@ export default function DataConsole() {
       onSuccess: (data) => {
         toast.success(`Record deleted in ${data.executionTime}ms`);
         setIsEditDrawerOpen(false);
+        const followUpQuery = lastSelectQuery || autoQuery;
+        if (followUpQuery) {
+          runSelectQuery(followUpQuery, { showToast: false });
+        }
       },
       onError: (error) => toast.error(`Delete failed: ${error.message}`),
     });
-  }, [buildWhereClause, executeQuery, originalRow, selectedTableSchema]);
+  }, [
+    autoQuery,
+    buildWhereClause,
+    executeQuery,
+    lastSelectQuery,
+    originalRow,
+    runSelectQuery,
+    selectedTableSchema,
+  ]);
 
   const handleRefresh = useCallback(() => {
     const query = lastExecutedQuery || autoQuery;
     if (!query) {
       toast.error('No query to refresh');
+      return;
+    }
+    if (isSelectQuery(query)) {
+      runSelectQuery(query);
       return;
     }
     setLastExecutedQuery(query);
@@ -300,7 +361,7 @@ export default function DataConsole() {
         toast.error(`Query failed: ${error.message}`);
       },
     });
-  }, [autoQuery, executeQuery, lastExecutedQuery]);
+  }, [autoQuery, executeQuery, isSelectQuery, lastExecutedQuery, runSelectQuery]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -406,7 +467,7 @@ export default function DataConsole() {
               </CardTitle>
               <CardDescription>
                 {filteredRows.length} rows
-                {debouncedSearch && ` (filtered from ${executeQuery.data?.rows?.length ?? 0})`}
+                {debouncedSearch && ` (filtered from ${queryResult?.rows?.length ?? 0})`}
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -435,13 +496,13 @@ export default function DataConsole() {
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
-          ) : executeQuery.data?.columns ? (
+          ) : queryResult?.columns ? (
             <>
               <div className="rounded-md border">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      {executeQuery.data.columns.map((col) => (
+                      {queryResult.columns.map((col) => (
                         <TableHead key={col} className="whitespace-nowrap">
                           {col}
                         </TableHead>
@@ -457,7 +518,7 @@ export default function DataConsole() {
                           className="cursor-pointer hover:bg-muted/50"
                           onClick={() => handleRowClick(row)}
                         >
-                          {executeQuery.data!.columns.map((col) => (
+                          {queryResult.columns.map((col) => (
                             <TableCell key={col} className="max-w-[200px] truncate">
                               {String(row[col] ?? '')}
                             </TableCell>
@@ -470,7 +531,7 @@ export default function DataConsole() {
                     ) : (
                       <TableRow>
                         <TableCell
-                          colSpan={executeQuery.data.columns.length + 1}
+                          colSpan={queryResult.columns.length + 1}
                           className="h-24 text-center"
                         >
                           {debouncedSearch
